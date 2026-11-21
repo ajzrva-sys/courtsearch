@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virginia court search for tenant screening</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", sans-serif; color: #1c1917; background: #fafaf9; }
+  header { background: #1e3a5f; color: #fff; padding: 20px 28px; }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  header p { margin: 4px 0 0; font-size: 13px; color: #cbd5e1; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 28px 64px; }
+  form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; padding: 16px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #57534e; }
+  label.check { flex-direction: row; align-items: center; gap: 6px; font-weight: 500; padding-bottom: 8px; }
+  input[type=text] { font: inherit; padding: 8px 10px; border: 1px solid #d6d3d1; border-radius: 6px; width: 220px; }
+  button { font: inherit; font-weight: 600; background: #1e3a5f; color: #fff; border: 0; border-radius: 6px; padding: 9px 18px; cursor: pointer; }
+  button:disabled { background: #a8a29e; cursor: default; }
+  .note { font-size: 12.5px; color: #78716c; margin: 12px 2px; }
+  .progress { margin: 18px 0; }
+  .bar { height: 8px; background: #e7e5e4; border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: #1e3a5f; width: 0; transition: width .3s; }
+  .progress p { font-size: 13px; color: #57534e; margin: 6px 0 0; }
+  .summary { display: flex; gap: 18px; flex-wrap: wrap; margin: 18px 0; }
+  .summary div { background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; padding: 10px 16px; }
+  .summary strong { display: block; font-size: 20px; }
+  .summary span { font-size: 12px; color: #78716c; }
+  .filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 8px 0 14px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #f5f5f4; font-size: 13px; vertical-align: top; }
+  th { background: #f5f5f4; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #57534e; position: sticky; top: 0; }
+  tr.screening td:first-child { box-shadow: inset 3px 0 0 #b45309; }
+  td a { color: #1e3a5f; }
+  button { font: inherit; font-weight: 600; background: #1e3a5f; color: #fff; border: 0; border-radius: 6px; padding: 9px 18px; cursor: pointer; }
+  button:disabled { background: #a8a29e; cursor: default; }
+  .error { color: #b91c1c; font-size: 13px; }
+  .empty { color: #78716c; padding: 24px; text-align: center; }
+  @media (max-width: 760px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    header { padding-top: 16px; }
+    header h1 { font-size: 18px; }
+    main { padding-top: 16px; }
+    form { align-items: stretch; }
+    label, input[type=text], button, label.check { width: 100%; }
+    input[type=text] { width: 100%; font-size: 16px; }
+    label.check { padding-bottom: 0; }
+    .summary { gap: 8px; }
+    .summary div { flex: 1 1 40%; }
+    .filters { align-items: stretch; }
+    #table { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid #e7e5e4; border-radius: 8px; }
+    #table table { min-width: 880px; border: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Virginia court search for tenant screening</h1>
+  <p>One name, searched across all {{ court_count }} general district courts. Civil and criminal/traffic.</p>
+</header>
+<main>
+  <form id="search">
+    <label>Last name<input type="text" name="last_name" required autofocus></label>
+    <label>First name<input type="text" name="first_name"></label>
+    <label>Middle initial<input type="text" name="middle_initial" maxlength="1" style="width: 4em"></label>
+    <button type="submit" id="go">Search all courts</button>
+    <label class="check"><input type="checkbox" name="refresh"> Full refresh</label>
+  </form>
+  <p class="note">
+    Results come from the Virginia General District Court Online Case Information System, which only
+    searches one court at a time. This runs that search for every court and combines them. A result
+    saved earlier today is shown again. A search from a previous day checks the courts again, and
+    Full refresh checks them now. Common names match other people; confirm identity against the case
+    detail before relying on a row. The portal's own records are the source of truth, and they are
+    not the official court record.
+  </p>
+  <div class="progress" id="progress" hidden>
+    <div class="bar"><div id="bar"></div></div>
+    <p id="status"></p>
+  </div>
+  <div id="out"></div>
+</main>
+<script>
+const SCREENING = new Set({{ screening_types|tojson }});
+const form = document.getElementById("search");
+const out = document.getElementById("out");
+let allCases = [];
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = document.getElementById("go");
+  button.disabled = true;
+  out.innerHTML = "";
+  document.getElementById("progress").hidden = false;
+  setProgress(0, 1, "Starting…");
+  const refresh = form.refresh.checked;
+  form.refresh.checked = false;
+  const body = {
+    last_name: form.last_name.value,
+    first_name: form.first_name.value,
+    middle_initial: form.middle_initial.value,
+    refresh,
+  };
+  const started = await fetch("/api/search", {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+  });
+  const job = await started.json();
+  if (!started.ok) { fail(job.error || "Search rejected."); button.disabled = false; return; }
+  if (job.cached) {
+    document.getElementById("progress").hidden = true;
+    button.disabled = false;
+    render(job.results);
+    return;
+  }
+  poll(job.job_id, button);
+});
+
+async function poll(jobId, button) {
+  const response = await fetch("/api/search/" + jobId);
+  const job = await response.json();
+  setProgress(job.done, job.total, job.last_court ? "Searching " + job.last_court : "Searching…");
+  if (job.state === "running") { setTimeout(() => poll(jobId, button), 1500); return; }
+  button.disabled = false;
+  if (job.state === "failed") { fail(job.error || "Search failed."); return; }
+  document.getElementById("progress").hidden = true;
+  render(job.results);
+}
+
+function setProgress(done, total, text) {
+  document.getElementById("bar").style.width = Math.round(100 * done / total) + "%";
+  document.getElementById("status").textContent = text + " (" + done + " of " + total + ")";
+}
+
+function fail(message) {
+  document.getElementById("progress").hidden = true;
+  out.innerHTML = '<p class="error">' + escapeText(message) + "</p>";
+}
+
+function render(results) {
+  allCases = results.cases;
+  const summary = results.summary;
+  const types = Object.entries(summary.by_case_type).slice(0, 8)
+    .map(([type, count]) => count + " " + type).join(" · ");
+  out.innerHTML = `
+    <div class="summary">
+      <div><strong>${summary.cases}</strong><span>cases found</span></div>
+      <div><strong>${summary.courts_with_cases}</strong><span>courts with cases</span></div>
+      <div><strong>${summary.courts_searched}</strong><span>courts searched</span></div>
+      <div><strong>${summary.failed_queries}</strong><span>courts that failed</span></div>
+      <div><strong>${results.from_cache ? "saved" : results.seconds + "s"}</strong><span>${savedLabel(results)}</span></div>
+    </div>
+    <div class="filters">
+      <button type="button" id="print-page">Print</button>
+      <label><input type="checkbox" id="screening-only"> Show only unlawful detainers, garnishments, and warrants in debt</label>
+      <span>${escapeText(types)}</span>
+    </div>
+    <div id="table"></div>`;
+  document.getElementById("screening-only").addEventListener("change", draw);
+  document.getElementById("print-page").addEventListener("click", printPage);
+  draw();
+}
+
+function savedLabel(results) {
+  if (!results.from_cache || !results.cached_at) return "search time";
+  return "from " + new Date(results.cached_at * 1000).toLocaleString();
+}
+
+function shownRows() {
+  const only = document.getElementById("screening-only").checked;
+  return allCases.filter((row) => !only || SCREENING.has(row.case_type));
+}
+
+async function printPage() {
+  const rows = shownRows();
+  if (!rows.length) return;
+  const button = document.getElementById("print-page");
+  button.disabled = true;
+  const name = [form.first_name.value, form.middle_initial.value, form.last_name.value].filter(Boolean).join(" ");
+  const response = await fetch("/api/print", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name, cases: rows}),
+  });
+  button.disabled = false;
+  if (!response.ok) { fail("Print failed."); return; }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = (name || "results").replace(/\s+/g, "-") + ".pdf";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function draw() {
+  const rows = shownRows();
+  const host = document.getElementById("table");
+  if (!rows.length) { host.innerHTML = '<p class="empty">No cases matched.</p>'; return; }
+  const body = rows.map((row) => `<tr class="${SCREENING.has(row.case_type) ? "screening" : ""}">
+      <td>${escapeText(row.court)}</td>
+      <td>${link(row)}</td>
+      <td>${escapeText(row.division)}</td>
+      <td>${escapeText(row.case_type)}</td>
+      <td>${escapeText(row.plaintiff)}</td>
+      <td>${escapeText(row.defendant)}</td>
+      <td>${escapeText(row.judgment)}</td>
+      <td>${escapeText(row.hearing_date)}</td>
+    </tr>`).join("");
+  host.innerHTML = `<table><thead><tr>
+      <th>Court</th><th>Case</th><th>Division</th><th>Type / charge</th>
+      <th>Plaintiff</th><th>Defendant</th><th>Judgment</th><th>Hearing</th>
+    </tr></thead><tbody>${body}</tbody></table>
+    <p class="note">${rows.length} shown. Highlighted rows are unlawful detainers, garnishments, or warrants in debt.</p>`;
+}
+
+function link(row) {
+  const label = escapeText(row.case_number);
+  const href = row.href || ("/case/" + row.fips + "/" + row.case_number);
+  return `<a href="${escapeText(href)}">${label}</a>`;
+}
+
+function escapeText(value) {
+  return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[ch]);
+}
+</script>
+</body>
+</html>
